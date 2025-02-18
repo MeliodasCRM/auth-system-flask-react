@@ -8,63 +8,75 @@ from flask_cors import CORS
 from flask_jwt_extended import create_access_token
 from flask_jwt_extended import get_jwt_identity
 from flask_jwt_extended import jwt_required
-import bcrypt
 
 api = Blueprint('api', __name__)
 
-# Allow CORS requests to this API
-CORS(api)
-
-@api.route('/hello', methods=['POST', 'GET'])
-def handle_hello():
-
-    response_body = {
-        "message": "Hello! I'm a message that came from the backend, check the network tab on the google inspector and you will see the GET request"
+CORS(api, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
     }
+})
 
-    return jsonify(response_body), 200
+@api.route('/signup', methods=['POST'])
+def signup():
+    try:
+        data = request.get_json()
+        
+        email = data.get('email')
+        password = data.get('password')
 
-#register
-@api.route('/register', methods=['POST'])
-def sign_up():
-    email = request.json.get('email', None)
-    password = request.json.get('password', None)
+        if not email or not password:
+            return jsonify({"message": "Email y contraseña son requeridos"}), 400
 
-    if email == None or password == None: return jsonify({'msg': 'Wrong email or password'}), 401
+        if User.query.filter_by(email=email).first():
+            return jsonify({"message": "El usuario ya existe"}), 400
 
-    hashed_password = ''
+        new_user = User(email=email, password=password)  
 
-    user= User(email=email, password=hashed_password)
+        db.session.add(new_user)
+        db.session.commit()
 
-# Create a route to authenticate your users and return JWTs. The
-# create_access_token() function is used to actually generate the JWT.
-@api.route("/login", methods=["POST"])
+        return jsonify({"message": "Usuario registrado exitosamente"}), 201
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error interno en el servidor", "error": str(e)}), 500
+
+@api.route('/login', methods=['POST'])
 def login():
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"message": "Debe enviar datos en el cuerpo de la solicitud"}), 400
+    
+    email = data.get('email')
+    password = data.get('password')
 
-    email = request.json.get("email", None)
-    password = request.json.get("password", None)
+    if not email or not password:
+        return jsonify({"message": "Email y contraseña son requeridos"}), 400
 
-    if email == None or password == None:
-        return jsonify({"msg": "Bad email or password"}), 401
+    user = User.query.filter_by(email=email, password=password).first()
+    
+    if not user:
+        return jsonify({"message": "Usuario o contraseña incorrectos"}), 401
 
-    user = User.query.filter_by(email=email).one_or_none()
+    access_token = create_access_token(identity=str(user.id))
+    
+    return jsonify({
+        "access_token": access_token,
+        "message": "Login exitoso"
+    }), 200
 
-    if user != None:
-        if password == user.password:
-            access_token = create_access_token(identity=email)
-            return jsonify(access_token=access_token)
-        else:
-            return jsonify({"msg": "Wrong password"}), 401
-    return jsonify({"msg": "User not found"}), 404
-
-# Protect a route with jwt_required, which will kick out requests
-# without a valid JWT present.
-@api.route("/protected", methods=["GET"])
+@api.route('/private', methods=['GET'])
 @jwt_required()
 def protected():
-    # Access the identity of the current user with get_jwt_identity
-    current_user = get_jwt_identity()
-    user = User.query.filter_by(email=current_user, is_active=True).one_or_none()
-    if user != None:
-        return jsonify(user.serialize()), 200
-    return jsonify({"msg": "User inactive! Please contact support."}), 200
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    return jsonify({
+        "message": "Acceso permitido al área privada",
+        "user_email": user.email
+    }), 200
